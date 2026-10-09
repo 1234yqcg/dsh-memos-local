@@ -8,6 +8,10 @@ import {
   type DshUserMessageLike,
 } from "../../../adapters/deepseek-harness/bridge.js";
 import { DeepSeekHarnessLlmRouteContext } from "../../../adapters/deepseek-harness/host-llm.js";
+// Use the real producer instead of a local fixture: a fixture silently drifted
+// from the live contract once already (DSH 0.1.7 dropped the catch-all
+// `kind:"plugin"` shell) and kept these tests green while production broke.
+import { createDeepSeekHarnessRecallMessage } from "../../../adapters/deepseek-harness/index.js";
 
 function userMessage(text: string): DshUserMessageLike {
   return {
@@ -19,16 +23,7 @@ function userMessage(text: string): DshUserMessageLike {
 }
 
 function recallMessage(text: string): DshUserMessageLike {
-  return {
-    id: `recall-${text.length}`,
-    role: "user",
-    content: [{ type: "text", text }],
-    source: {
-      kind: "plugin",
-      plugin: "memos-local-memory",
-      form: "recall",
-    },
-  };
+  return createDeepSeekHarnessRecallMessage(text);
 }
 
 function makeCore(overrides: Partial<MemoryCore> = {}): MemoryCore {
@@ -538,9 +533,10 @@ describe("DeepSeek Harness bridge", () => {
     expect(first.messages[0]).toBe(prompt);
     expect(first.messages[1]).toMatchObject({
       role: "user",
+      // Assert the exact source object, not a subset: `toMatchObject` tolerates
+      // extra keys, so the retired `plugin` field would slip through.
       source: {
-        kind: "plugin",
-        plugin: "memos-local-memory",
+        kind: "plugin:memos-local-memory",
         form: "recall",
       },
       content: [{
@@ -548,12 +544,15 @@ describe("DeepSeek Harness bridge", () => {
         text: expect.stringContaining("The user prefers concise technical answers."),
       }],
     });
+    expect(
+      (first.messages[1] as { source?: Record<string, unknown> }).source,
+    ).toEqual({ kind: "plugin:memos-local-memory", form: "recall" });
     expect(replayedFirstStep).toEqual({ kind: "enter", messages: [prompt] });
     expect(second).toEqual({ kind: "enter", messages: [] });
     expect(followUp).toMatchObject({
       kind: "enter",
       messages: [followUpPrompt, expect.objectContaining({
-        source: expect.objectContaining({ plugin: "memos-local-memory" }),
+        source: expect.objectContaining({ kind: "plugin:memos-local-memory" }),
       })],
     });
   });
@@ -590,7 +589,7 @@ describe("DeepSeek Harness bridge", () => {
     expect(result).toMatchObject({
       kind: "enter",
       messages: [prompt, expect.objectContaining({
-        source: expect.objectContaining({ plugin: "memos-local-memory" }),
+        source: expect.objectContaining({ kind: "plugin:memos-local-memory" }),
       })],
     });
     expect(core.searchMemory).toHaveBeenCalledTimes(1);
@@ -637,7 +636,7 @@ describe("DeepSeek Harness bridge", () => {
     expect(result).toMatchObject({
       kind: "enter",
       messages: [prompt, expect.objectContaining({
-        source: expect.objectContaining({ plugin: "memos-local-memory" }),
+        source: expect.objectContaining({ kind: "plugin:memos-local-memory" }),
       })],
     });
   });
@@ -682,7 +681,7 @@ describe("DeepSeek Harness bridge", () => {
     expect(result).toMatchObject({
       kind: "enter",
       messages: [prompt, expect.objectContaining({
-        source: expect.objectContaining({ plugin: "memos-local-memory" }),
+        source: expect.objectContaining({ kind: "plugin:memos-local-memory" }),
       })],
     });
     expect(core.searchMemory).toHaveBeenCalledTimes(1);
@@ -836,7 +835,7 @@ describe("DeepSeek Harness bridge", () => {
     expect(result).toMatchObject({
       kind: "enter",
       messages: [retry, expect.objectContaining({
-        source: expect.objectContaining({ plugin: "memos-local-memory" }),
+        source: expect.objectContaining({ kind: "plugin:memos-local-memory" }),
       })],
     });
 
@@ -959,7 +958,7 @@ describe("DeepSeek Harness bridge", () => {
     await expect(nextStep).resolves.toMatchObject({
       kind: "enter",
       messages: [secondPrompt, expect.objectContaining({
-        source: expect.objectContaining({ plugin: "memos-local-memory" }),
+        source: expect.objectContaining({ kind: "plugin:memos-local-memory" }),
       })],
     });
     expect(core.searchMemory).toHaveBeenCalledTimes(2);
@@ -1037,7 +1036,7 @@ describe("DeepSeek Harness bridge", () => {
     await expect(nextStep).resolves.toMatchObject({
       kind: "enter",
       messages: [secondPrompt, expect.objectContaining({
-        source: expect.objectContaining({ plugin: "memos-local-memory" }),
+        source: expect.objectContaining({ kind: "plugin:memos-local-memory" }),
       })],
     });
     expect(core.searchMemory).toHaveBeenCalledTimes(2);

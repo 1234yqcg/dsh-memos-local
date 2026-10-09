@@ -176,7 +176,11 @@ describe("DeepSeek Harness host LLM bridge", () => {
         {
           role: "user",
           content: [{ type: "text", text: "Question" }],
-          source: { kind: "plugin", plugin: "memos-local-memory" },
+          // DSH 0.1.7 (Session V4) removed the shared catch-all `plugin` kind:
+          // `MessageSourceMap` is merge-extensible and each producer declares
+          // its own kind, so the plugin name now rides inside `kind` itself and
+          // the separate `plugin` field is gone.
+          source: { kind: "plugin:memos-local-memory" },
         },
         {
           role: "assistant",
@@ -186,6 +190,11 @@ describe("DeepSeek Harness host LLM bridge", () => {
       ],
     });
     expect(request).not.toHaveProperty("sessionId");
+    // Guard the exact source shape, not just the kind: `toMatchObject` ignores
+    // extra keys, so a regression that re-added the retired `plugin` field
+    // would otherwise pass unnoticed.
+    const hostUserMessage = request?.messages[0] as { source?: Record<string, unknown> };
+    expect(hostUserMessage?.source).toEqual({ kind: "plugin:memos-local-memory" });
     expect(request?.signal).toBeInstanceOf(AbortSignal);
     expect(prepared?.config).toEqual({
       provider: "deepseek",

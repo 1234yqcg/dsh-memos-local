@@ -3,6 +3,49 @@
 Notable changes to `dsh-memos-local`. Maintained by hand; for the full
 per-commit history use `git log` or the GitHub releases page.
 
+## [v2.0.20-dsh.3]
+
+### Fixed — DSH 0.2.1 compatibility
+
+- **The DSH core gate rejected the plugin on 0.2.1-alpha.1** with
+  `Plugin @steven-stack-s/dsh-memos-local@2.0.20-dsh.2 is incompatible with dsh
+  0.2.1-alpha.1: peerDependencies {... <0.2.0 ...}`, so the bundle was skipped
+  entirely (no recall, no capture, no `memos_*` tools). The upper bound is now
+  `<0.3.0` for all six `@deepseek-ai/dsh-*` peers, which covers the 0.2.x line.
+  - Note: an exact-version exemption
+    (`dsh plugin allow-version <pkg@ver> --dsh-version 0.2.1-alpha.1`) only covers
+    one `pkg@version` + DSH version pair and is re-tripped by any DSH upgrade or
+    plugin reinstall; widening the range is the durable fix.
+- Audited the 0.2.1 runtime surface the adapter actually uses. No code changes
+  were required: `prepareCall(config, signal)`, `resolveModelInfo(provider,
+  model, signal)`, `createUserMessage({ content, source })`, and
+  `EpochHeader.config: LlmCallConfig` are all unchanged, and `deadline`,
+  `timeoutOf`, and `defineTool` still resolve at runtime.
+  - `@deepseek-ai/dsh-session` 0.2.1 deprecates the synchronous event reads
+    (`eventAt`, `snapshotEvents`, `ownEvents`) in favour of asynchronous ones.
+    The adapter does not call them — it consumes the `session/event` stream — so
+    nothing had to change, but new code must not adopt the deprecated reads.
+
+### Fixed — test suite no longer drifts from the live source contract
+
+- `createRecallMessage` was inlined inside `apply()` and therefore untestable, so
+  `deepseek-harness-bridge.test.ts` injected its own fixture. That fixture kept
+  the retired `{ kind: "plugin", plugin: "memos-local-memory" }` shape after the
+  0.1.7 fix landed, so 7 assertions were green while production had moved on.
+  - Extracted `createDeepSeekHarnessRecallMessage(text)` as an exported producer
+    (pure refactor: the runtime value is byte-identical) and pointed the tests at
+    it; this exposed and fixed the 7 stale assertions.
+  - `deepseek-harness-host-llm.test.ts` asserted the same retired shape and was
+    failing outright; it now pins `{ kind: "plugin:memos-local-memory" }` and
+    asserts the exact source object, since `toMatchObject` tolerates the extra
+    `plugin` key that the contract removed.
+- Added `tests/unit/adapters/deepseek-harness-source-contract.test.ts` as a guard.
+  `MessageSourceMap` is merge-extensible and documents that "there is no shared
+  catch-all `plugin` kind", so the guard pins the producer-owned kind, rejects the
+  retired shell, and keeps the kind derived from the plugin identity rather than a
+  literal. Verified in both directions: it fails when the old shape is restored and
+  passes on the current code.
+
 ## [v2.0.20-dsh.2]
 
 ### Fixed — DSH 0.1.7-alpha.1 compatibility (Session format V4)
