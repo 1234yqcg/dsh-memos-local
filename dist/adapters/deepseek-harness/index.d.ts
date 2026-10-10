@@ -2,6 +2,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import Schema from "@deepseek-ai/schemastery";
 import { type ResolvedConfig } from "../../core/config/index.js";
+import { type DshUserMessageLike } from "./bridge.js";
 import { type DeepSeekHarnessHostLlmBridge } from "./host-llm.js";
 export declare const name = "memos-local-memory";
 export declare const inject: string[];
@@ -27,6 +28,19 @@ export declare const Config: Schema<Config>;
 /** Keep DSH foreground memory work within the product-level 3s SLA. */
 export declare function deepSeekHarnessSearchTimeoutMs(configuredMs: number): number;
 export declare function deepSeekHarnessMemoryGuidance(toolsEnabled: boolean): string;
+/**
+ * Build the user-role message carrying recalled memory for one turn.
+ *
+ * Exported so tests can assert the real producer contract instead of a local
+ * fixture that drifts from it. DSH 0.1.7 (Session V4) removed the shared
+ * catch-all `kind:"plugin"` shell: `MessageSourceMap` is merge-extensible and
+ * every producer declares its own kind, so an unregistered producer resolves to
+ * `"plugin:<name>"` and the separate `plugin` field is dropped. The old
+ * `@deepseek-ai/dsh-llm` types narrowed `kind` to
+ * `"model"|"user"|"tool"|"plugin"`, while 0.1.7 widened it to a string, hence
+ * the assertion bridge below (the runtime value is unaffected).
+ */
+export declare function createDeepSeekHarnessRecallMessage(text: string): DshUserMessageLike;
 export declare function defaultDeepSeekHarnessHome(configuredHome: string, env?: NodeJS.ProcessEnv, userHome?: string): string;
 /** Use DSH's configured model only when MemOS has no explicit LLM provider. */
 export declare function configureDeepSeekHarnessHostLlm(config: ResolvedConfig, enabled: boolean): ResolvedConfig;
