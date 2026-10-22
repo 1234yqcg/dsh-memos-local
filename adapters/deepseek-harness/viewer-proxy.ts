@@ -14,25 +14,83 @@ const INJECT = `
 <script>
 (function () {
   var P = ${JSON.stringify(PREFIX)};
+  var KEY = 'memos.session.token';
   function fix(u) {
     if (typeof u !== "string") return u;
     return u.indexOf("/api/") === 0 ? P + u : u;
   }
+  // DSH Desktop serves this page through its own dsh-app:// protocol and
+  // strips "set-cookie" from every forwarded response (it owns the shell's
+  // cookie jar). A cookie-only login therefore succeeds and is instantly
+  // forgotten. We keep the token that /auth/login returns and replay it as
+  // an Authorization: Bearer header, which needs no cookie jar at all.
+  function token() {
+    try { return window.localStorage.getItem(KEY); } catch (e) { return null; }
+  }
+  function save(t) {
+    try { window.localStorage.setItem(KEY, t); } catch (e) {}
+  }
+  function clear() {
+    try { window.localStorage.removeItem(KEY); } catch (e) {}
+  }
   var _fetch = window.fetch;
   if (_fetch) {
     window.fetch = function (input, init) {
-      if (typeof input === "string") return _fetch.call(this, fix(input), init);
-      if (input && typeof input.url === "string" && input.url.indexOf("/api/") === 0) {
-        return _fetch.call(this, new Request(P + input.url, input), init);
+      var url = typeof input === "string" ? input : (input && input.url);
+      var fixed = fix(url);
+      var opts = init ? Object.assign({}, init) : {};
+      var t = token();
+      if (t) {
+        var h = new Headers(opts.headers || (input instanceof Request ? input.headers : undefined));
+        if (!h.has("authorization")) h.set("authorization", "Bearer " + t);
+        opts.headers = h;
       }
-      return _fetch.call(this, input, init);
+      var target = typeof input === "string" ? fixed : new Request(fixed, input);
+      var p = _fetch.call(this, target, opts);
+      if (typeof url === "string" && /\\/auth\\/(login|setup)$/.test(url)) {
+        // Persist the token BEFORE the caller resumes, so the status probe
+        // that the viewer fires immediately after a successful login
+        // already carries the Bearer header.
+        return p.then(function (res) {
+          if (res && res.status === 200) {
+            return res.clone().json().then(function (d) {
+              if (d && typeof d.token === "string") save(d.token);
+              return res;
+            }).catch(function () { return res; });
+          }
+          return res;
+        });
+      }
+      if (typeof url === "string" && /\\/auth\\/logout$/.test(url)) clear();
+      return p;
     };
   }
   var _open = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (m, u) {
     var args = Array.prototype.slice.call(arguments);
     args[1] = fix(u);
-    return _open.apply(this, args);
+    _open.apply(this, args);
+    try {
+      var t = token();
+      if (t) this.setRequestHeader("authorization", "Bearer " + t);
+    } catch (e) {}
+  };  var _send = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function (body) {
+    try {
+      this.addEventListener("load", function () {
+        try {
+          if (this.status !== 200) return;
+          var u = String(this.responseURL || "");
+          if (/\\/auth\\/(login|setup)$/.test(u)) {
+            var d = JSON.parse(this.responseText);
+            if (d && typeof d.token === "string") save(d.token);
+          } else if (/\\/auth\\/logout$/.test(u)) {
+            clear();
+          }
+        } catch (e) {}
+      });
+    } catch (e) {}
+    return _send.call(this, body);
   };
   if (window.EventSource) {
     var _ES = window.EventSource;

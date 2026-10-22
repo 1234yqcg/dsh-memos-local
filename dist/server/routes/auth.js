@@ -90,6 +90,32 @@ function readSessionCookie(cookieHeader, agent) {
     return null;
 }
 /**
+ * Read a session token from an `Authorization: Bearer <token>` header.
+ *
+ * DSH Desktop serves the viewer through its own `dsh-app://app` protocol and
+ * strips `set-cookie` from every forwarded response (it owns the shell's
+ * cookie jar). A cookie-only login therefore succeeds and is then forgotten.
+ * The viewer stores the token returned by `/auth/login` and replays it here,
+ * which needs no cookie jar at all.
+ */
+export function readAuthHeaderSession(headers) {
+    const raw = headers?.authorization;
+    if (typeof raw !== "string")
+        return null;
+    const m = /^Bearer\s+(.+)$/i.exec(raw.trim());
+    return m ? m[1].trim() : null;
+}
+/**
+ * Resolve the session token for a request: cookie first (browser / standalone
+ * viewer), then the Authorization header (protocol-forwarded embeds).
+ */
+export function readSessionToken(req, agent) {
+    const cookie = readSessionCookie(req.headers.cookie, agent);
+    if (cookie)
+        return cookie;
+    return readAuthHeaderSession(req.headers);
+}
+/**
  * Serialise / deserialise the auth file. Sits alongside `config.yaml`
  * but is kept separate because it contains credentials.
  */
@@ -242,7 +268,7 @@ export function registerAuthRoutes(routes, deps, options = {}) {
             // exists — see `requireSession` below).
             return { enabled: true, needsSetup: true, authenticated: false };
         }
-        const cookie = readSessionCookie(ctx.req.headers.cookie, agent);
+        const cookie = readSessionToken(ctx.req, agent);
         const authed = cookie ? verifySession(cookie, state) : false;
         return { enabled: true, needsSetup: false, authenticated: authed };
     });
@@ -277,7 +303,7 @@ export function registerAuthRoutes(routes, deps, options = {}) {
         const now = Date.now();
         const token = signSession(state, { iat: now, exp: now + SESSION_TTL_MS });
         setSessionCookie(ctx.res, token, agent);
-        return { ok: true };
+        return { ok: true, token };
     });
     routes.set("POST /api/v1/auth/login", async (ctx) => {
         const root = homeRoot();
@@ -299,7 +325,7 @@ export function registerAuthRoutes(routes, deps, options = {}) {
         const now = Date.now();
         const token = signSession(state, { iat: now, exp: now + SESSION_TTL_MS });
         setSessionCookie(ctx.res, token, agent);
-        return { ok: true };
+        return { ok: true, token };
     });
     routes.set("POST /api/v1/auth/logout", async (ctx) => {
         clearSessionCookie(ctx.res, agent);
@@ -328,7 +354,7 @@ export function registerAuthRoutes(routes, deps, options = {}) {
         // otherwise anyone on localhost could drop the password.
         const state = readAuthState(root);
         if (state) {
-            const cookie = readSessionCookie(ctx.req.headers.cookie, agent);
+            const cookie = readSessionToken(ctx.req, agent);
             if (!cookie || !verifySession(cookie, state)) {
                 writeError(ctx, 401, "unauthenticated", "login required");
                 return;
@@ -446,7 +472,7 @@ export function requireSession(req, res, homeDir, pathname, agent) {
     const state = readAuthState(homeDir);
     if (!state)
         return true; // password protection off → open
-    const cookie = readSessionCookie(req.headers.cookie, agent);
+    const cookie = readSessionToken(req, agent);
     if (cookie && verifySession(cookie, state))
         return true;
     res.writeHead(401, { "Content-Type": "application/json" });

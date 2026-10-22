@@ -1,5 +1,27 @@
 import type { ServerDeps, ServerOptions } from "../types.js";
 import { type Routes } from "./registry.js";
+/**
+ * Read a session token from an `Authorization: Bearer <token>` header.
+ *
+ * DSH Desktop serves the viewer through its own `dsh-app://app` protocol and
+ * strips `set-cookie` from every forwarded response (it owns the shell's
+ * cookie jar). A cookie-only login therefore succeeds and is then forgotten.
+ * The viewer stores the token returned by `/auth/login` and replays it here,
+ * which needs no cookie jar at all.
+ */
+export declare function readAuthHeaderSession(headers: {
+    authorization?: string | string[] | undefined;
+} | undefined): string | null;
+/**
+ * Resolve the session token for a request: cookie first (browser / standalone
+ * viewer), then the Authorization header (protocol-forwarded embeds).
+ */
+export declare function readSessionToken(req: {
+    headers: {
+        cookie?: string | undefined;
+        authorization?: string | string[] | undefined;
+    };
+}, agent: string | null | undefined): string | null;
 export interface AuthState {
     version: 1;
     hash: string;
