@@ -13,15 +13,23 @@ export declare function readAuthHeaderSession(headers: {
     authorization?: string | string[] | undefined;
 } | undefined): string | null;
 /**
- * Resolve the session token for a request: cookie first (browser / standalone
- * viewer), then the Authorization header (protocol-forwarded embeds).
+ * Resolve a *verified* session for a request: cookie first (browser /
+ * standalone viewer), then the Authorization header (protocol-forwarded
+ * embeds).
+ *
+ * The cookie is verified before it is accepted, and a present-but-invalid
+ * cookie (expired, legacy name, signed with a rotated secret) falls through
+ * to the header instead of shadowing it. Presence alone is not a session:
+ * returning an unverified cookie here would make the desktop client — which
+ * has no usable cookie jar — loop on the login screen while holding a
+ * perfectly valid Bearer token.
  */
 export declare function readSessionToken(req: {
     headers: {
         cookie?: string | undefined;
         authorization?: string | string[] | undefined;
     };
-}, agent: string | null | undefined): string | null;
+}, agent: string | null | undefined, state: AuthState): string | null;
 export interface AuthState {
     version: 1;
     hash: string;

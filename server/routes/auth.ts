@@ -126,16 +126,27 @@ export function readAuthHeaderSession(
 }
 
 /**
- * Resolve the session token for a request: cookie first (browser / standalone
- * viewer), then the Authorization header (protocol-forwarded embeds).
+ * Resolve a *verified* session for a request: cookie first (browser /
+ * standalone viewer), then the Authorization header (protocol-forwarded
+ * embeds).
+ *
+ * The cookie is verified before it is accepted, and a present-but-invalid
+ * cookie (expired, legacy name, signed with a rotated secret) falls through
+ * to the header instead of shadowing it. Presence alone is not a session:
+ * returning an unverified cookie here would make the desktop client — which
+ * has no usable cookie jar — loop on the login screen while holding a
+ * perfectly valid Bearer token.
  */
 export function readSessionToken(
   req: { headers: { cookie?: string | undefined; authorization?: string | string[] | undefined } },
   agent: string | null | undefined,
+  state: AuthState,
 ): string | null {
   const cookie = readSessionCookie(req.headers.cookie, agent);
-  if (cookie) return cookie;
-  return readAuthHeaderSession(req.headers);
+  if (cookie && verifySession(cookie, state)) return cookie;
+  const header = readAuthHeaderSession(req.headers);
+  if (header && verifySession(header, state)) return header;
+  return null;
 }
 
 export interface AuthState {
@@ -332,8 +343,7 @@ export function registerAuthRoutes(
       // exists — see `requireSession` below).
       return { enabled: true, needsSetup: true, authenticated: false };
     }
-    const cookie = readSessionToken(ctx.req, agent);
-    const authed = cookie ? verifySession(cookie, state) : false;
+    const authed = readSessionToken(ctx.req, agent, state) !== null;
     return { enabled: true, needsSetup: false, authenticated: authed };
   });
 
@@ -422,8 +432,7 @@ export function registerAuthRoutes(
     // otherwise anyone on localhost could drop the password.
     const state = readAuthState(root);
     if (state) {
-      const cookie = readSessionToken(ctx.req, agent);
-      if (!cookie || !verifySession(cookie, state)) {
+      if (!readSessionToken(ctx.req, agent, state)) {
         writeError(ctx, 401, "unauthenticated", "login required");
         return;
       }
@@ -546,8 +555,7 @@ export function requireSession(
   const state = readAuthState(homeDir);
   if (!state) return true; // password protection off → open
 
-  const cookie = readSessionToken(req, agent);
-  if (cookie && verifySession(cookie, state)) return true;
+  if (readSessionToken(req, agent, state)) return true;
 
   res.writeHead(401, { "Content-Type": "application/json" });
   res.end(

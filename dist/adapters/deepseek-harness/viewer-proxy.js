@@ -17,6 +17,19 @@ const INJECT = `
     if (typeof u !== "string") return u;
     return u.indexOf("/api/") === 0 ? P + u : u;
   }
+  // Never attach the session credential to a cross-origin request: the
+  // wrapper sits on window.fetch / XMLHttpRequest.prototype, so without this
+  // guard it would also decorate the viewer's probe of a sibling agent port
+  // (which asks for credentials:"omit") or any future third-party URL. A
+  // leaked Bearer token is a portable 7-day credential, and an extra header
+  // on a cross-origin call also turns a simple request into a preflighted one.
+  function sameOrigin(u) {
+    if (typeof u !== "string") return false;
+    try {
+      var a = new URL(u, location.href);
+      return a.protocol === location.protocol && a.host === location.host;
+    } catch (e) { return false; }
+  }
   // DSH Desktop serves this page through its own dsh-app:// protocol and
   // strips "set-cookie" from every forwarded response (it owns the shell's
   // cookie jar). A cookie-only login therefore succeeds and is instantly
@@ -38,14 +51,16 @@ const INJECT = `
       var fixed = fix(url);
       var opts = init ? Object.assign({}, init) : {};
       var t = token();
-      if (t) {
+      if (t && sameOrigin(fixed)) {
         var h = new Headers(opts.headers || (input instanceof Request ? input.headers : undefined));
         if (!h.has("authorization")) h.set("authorization", "Bearer " + t);
         opts.headers = h;
       }
-      var target = typeof input === "string" ? fixed : new Request(fixed, input);
+      var target = typeof input === "string"
+        ? fixed
+        : (input instanceof Request ? new Request(fixed, input) : input);
       var p = _fetch.call(this, target, opts);
-      if (typeof url === "string" && /\\/auth\\/(login|setup)$/.test(url)) {
+      if (typeof url === "string" && sameOrigin(url) && /\\/auth\\/(login|setup)$/.test(url)) {
         // Persist the token BEFORE the caller resumes, so the status probe
         // that the viewer fires immediately after a successful login
         // already carries the Bearer header.
@@ -59,7 +74,7 @@ const INJECT = `
           return res;
         });
       }
-      if (typeof url === "string" && /\\/auth\\/logout$/.test(url)) clear();
+      if (typeof url === "string" && sameOrigin(url) && /\\/auth\\/logout$/.test(url)) clear();
       return p;
     };
   }
@@ -70,7 +85,7 @@ const INJECT = `
     _open.apply(this, args);
     try {
       var t = token();
-      if (t) this.setRequestHeader("authorization", "Bearer " + t);
+      if (t && sameOrigin(args[1])) this.setRequestHeader("authorization", "Bearer " + t);
     } catch (e) {}
   };  var _send = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function (body) {
@@ -79,6 +94,7 @@ const INJECT = `
         try {
           if (this.status !== 200) return;
           var u = String(this.responseURL || "");
+          if (!sameOrigin(u)) return;
           if (/\\/auth\\/(login|setup)$/.test(u)) {
             var d = JSON.parse(this.responseText);
             if (d && typeof d.token === "string") save(d.token);
