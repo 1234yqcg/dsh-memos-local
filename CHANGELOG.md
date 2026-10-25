@@ -3,6 +3,35 @@
 Notable changes to `dsh-memos-local`. Maintained by hand; for the full
 per-commit history use `git log` or the GitHub releases page.
 
+## [v2.0.20-dsh.4]
+
+### Added — DSH 桌面端的 Bearer 会话认证（PR #1，作者 @1234yqcg）
+
+- `dsh-app://app` 协议转发会剔除响应里的 `Set-Cookie`（桌面壳自己托管 cookie
+  jar），所以只依赖 cookie 的登录在桌面端"成功即失效"。`/auth/login` 与
+  `/auth/setup` 现在同时返回 `{ ok, token }`，viewer 注入脚本把 token 存进
+  `localStorage` 并以 `Authorization: Bearer` 重放；浏览器直连仍走 cookie。
+- 服务端 `requireSession`、`/auth/status`、`/auth/reset` 支持 Bearer 回退。
+
+### Fixed — token 的作用域与回退（评审补丁）
+
+- 注入脚本只对**同源**请求附加 `Authorization`：不再把会话 token 带到
+  `http://<host>:18799` 这类兄弟 agent 端口（`peers.ts` 明确要求
+  `credentials: "omit"`），也避免给跨源请求平白增加一次 CORS 预检；token 的
+  保存/清除同样做同源校验，防止任意 origin 的 `/auth/login` 响应覆写本地 token。
+- cookie 先**验签**再采用，失效时回退到 Bearer：避免过期、旧 `sessionSecret`
+  或 legacy `memos_sess` cookie 遮蔽有效 token，导致 AuthGate 卡在登录页循环。
+- 新增 `tests/unit/server/auth-bearer.test.ts` 的负向用例（无效 cookie + 有效
+  Bearer；同样的垃圾 cookie 单独出现仍应 401，作为反向控制）。
+
+### Known — 未在本次处理，记为后续事项
+
+- `/auth/logout` 不撤销服务端会话：token 在 7 天有效期内仍可重放。若要"退出即
+  失效"，需要给 `AuthState` 加 `tokenEpoch` 并参与签名/校验。
+- `enforceApiKey` 优先读 `Authorization: Bearer`，同时启用 `options.apiKey` 时
+  session token 会把 API key 顶掉（401）；需要给 session 换独立 header 或调整
+  中间件优先级。
+
 ## [v2.0.20-dsh.3]
 
 ### Fixed — DSH 0.2.1 compatibility

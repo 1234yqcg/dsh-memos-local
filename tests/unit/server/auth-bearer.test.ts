@@ -143,4 +143,50 @@ describe("Bearer token auth fallback (DSH desktop)", () => {
     });
     expect(bad.status).toBe(401);
   });
+
+  it("invalid cookie does not shadow a valid bearer token", async () => {
+    await setup("secret");
+    const { json } = await login("secret");
+    const token = ((await json()) as Record<string, unknown>).token as string;
+    expect(token).toBeTruthy();
+
+    // The desktop client has no usable cookie jar (DSH strips Set-Cookie),
+    // so a present-but-invalid cookie must not hide the Bearer token —
+    // otherwise /auth/status reports unauthenticated and AuthGate loops on
+    // the login screen while holding a perfectly valid token.
+    const staleAgentCookie = await fetch(`${handle.url}/api/v1/ping`, {
+      headers: {
+        cookie: "memos_sess_deepseek-harness=garbage",
+        authorization: `Bearer ${token}`,
+      },
+    });
+    expect(staleAgentCookie.status).toBe(200);
+
+    // Control: the same garbage cookie alone must still be rejected, so the
+    // assertion above can only pass because the Bearer token was honoured —
+    // not because present cookies are now trusted unverified.
+    const garbageCookieOnly = await fetch(`${handle.url}/api/v1/ping`, {
+      headers: { cookie: "memos_sess_deepseek-harness=garbage" },
+    });
+    expect(garbageCookieOnly.status).toBe(401);
+
+    // The legacy cookie name (pre-upgrade sessions) must fall through too.
+    const staleLegacyCookie = await fetch(`${handle.url}/api/v1/ping`, {
+      headers: {
+        cookie: "memos_sess=garbage",
+        authorization: `Bearer ${token}`,
+      },
+    });
+    expect(staleLegacyCookie.status).toBe(200);
+
+    // /auth/status must agree, otherwise the viewer never leaves login.
+    const status = await fetch(`${handle.url}/api/v1/auth/status`, {
+      headers: {
+        cookie: "memos_sess_deepseek-harness=garbage",
+        authorization: `Bearer ${token}`,
+      },
+    });
+    const st = (await status.json()) as { authenticated: boolean };
+    expect(st.authenticated).toBe(true);
+  });
 });
